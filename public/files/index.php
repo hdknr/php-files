@@ -1,7 +1,11 @@
 <?php
 function login_required($ctx){
-    if (isset($_SESSION['auth']) && $_SESSION['auth'])  {
-        return;
+    if (isset($_SESSION['info'])) {
+        $path = $ctx->request_path;
+        $info = $_SESSION['info'];
+        if (substr($path,  0, strlen($info['url'])) === $info['url']) {
+            return;
+        }
     }
     header("Location: {$ctx->login_url}?file={$ctx->request_path}", true, 301);
     exit;
@@ -15,8 +19,11 @@ function authenticate($ctx) {
     $pwd = $_POST['password'];
 
     $result = array_filter($ctx->passwords, function($item) use (&$pwd, &$path) {
-        if(count($item) > 2 ){
-           return (strpos($item[0], $path) !== false) && (strpos($item[1], $pwd) !== false);
+        if(count($item) > 1 ){
+            $base = dirname($path); 
+            if (strpos($item[0], $path) !== false || (strpos($item[0], $base) !== false) ){
+                return (strpos($item[1], $pwd) !== false);
+            }
         }
         return false;
     });
@@ -25,8 +32,8 @@ function authenticate($ctx) {
     if ($var === false) {
         return null;
     }
-
-    return array('url' => $var[0], 'redir' => $var[2]);
+    $url = trim($var[0]);
+    return array('url' => $url, 'redir' => $url);
 }
 
 
@@ -70,10 +77,9 @@ function process($ctx) {
         if (is_file($file)) {
             if (preg_match('/\.html$/', $file)) {
                 render_html($file);
-                return;
+            } else {
+                download($file);
             }
-            download($file);
-            session_destroy();
             return;
         }
     }
@@ -84,7 +90,6 @@ function init() {
     session_start();
 
     $login_url = '/files/login.html';
-    $thanks_url = '/files/thanks.html';
 
     $request_uri = parse_url($_SERVER['REQUEST_URI']);
     $request_path = $request_uri['path'];
@@ -101,27 +106,17 @@ function init() {
     $data_abspathname = "{$data_dir}{$data_pathname}";
 
     $template_login = "{$template_dir}/login.html";
-    $template_thanks = "{$template_dir}/thanks.html";
     $template_404 = "{$template_dir}/404.html";
 
     return (object)get_defined_vars();
-}
-
-function info_controller($ctx) {
-    login_required($ctx);
-
-    header("Access-Control-Allow-Origin: *");
-    $info = $_SESSION['info'];
-    echo json_encode($info); 
 }
 
 function login_controller($ctx) {
     $cred = authenticate($ctx);
 
     if($cred !== null) { 
-        $_SESSION['auth'] = true;
         $_SESSION['info'] = $cred;
-        $location = "Location: {$ctx->thanks_url}";
+        $location = "Location: {$cred['url']}";
         header($location, true, 301); 
         return;
     }
@@ -134,18 +129,11 @@ function data_controller($ctx) {
     process($ctx);
 }
 
-function thanks_controller($ctx) {
-    login_required($ctx);
-    include $ctx->template_thanks;
-}
-
 function dispatch() {
     $ctx = init();
 
     $routes = array(
         '/^\/files\/login.html$/' => function() use(&$ctx){login_controller($ctx);},
-        '/^\/files\/thanks.html$/' => function() use(&$ctx){thanks_controller($ctx);},
-        '/^\/files\/info.json/' => function() use(&$ctx){info_controller($ctx);},
         '/^\/files.+/' => function() use(&$ctx){data_controller($ctx);});
         
     foreach($routes as $pattern => $func) {
